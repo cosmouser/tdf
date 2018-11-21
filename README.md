@@ -27,6 +27,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		defer file.Close()
 		scanned := tdf.Scan(file, keys)
 		if scanned != nil {
 			entries = append(entries, scanned...)

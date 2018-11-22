@@ -88,7 +88,7 @@ func Scan(obj io.Reader, keys map[string]string) []*Entry {
 						inEntry = false
 					} else {
 						tmpEntry := stack.pop().value
-						stack.top.value.Info[tmpNode.value.Name] = tmpEntry
+						stack.top.value.Info[tmpEntry.Name] = tmpEntry
 					}
 				}
 				if line[i] == '=' && stack.size > 0 && inEntry {

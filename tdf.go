@@ -2,53 +2,30 @@ package tdf
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"strings"
 )
 
-// Entry is an entry in a tdf file
-type Entry struct {
-	Name string
-	Info map[string]interface{}
-}
-type tdfNode struct {
-	value *Entry
-	next  *tdfNode
-}
-type tdfStack struct {
-	top  *tdfNode
-	size int
+// Node is an entry in a tdf/ota/fbi file
+type Node struct {
+	Name     string
+	Fields   map[string]string
+	Children []*Node
 }
 
-func (s *tdfStack) pop() *tdfNode {
-	if s.size == 0 {
-		return nil
-	}
-	tmp := s.top
-	s.top = s.top.next
-	s.size--
-	return tmp
-}
-func (s *tdfStack) push(n *tdfNode) {
-	if s.size == 0 {
-		s.top = n
-		s.size++
-		return
-	}
-	n.next = s.top
-	s.top = n
-	s.size++
-}
+// /* ignore these comments */
+// and these: // until EOL
 
-// Scan reads tdf data and returns a slice of TdfMap structs. The keys
-// map is used so that attributes are recorded in a consistent casing
-func Scan(obj io.Reader, keys map[string]string) []*Entry {
-	scanner := bufio.NewScanner(obj)
-	var comment, inEntry bool
-	entries := []*Entry{}
-	stack := &tdfStack{}
-	for scanner.Scan() {
-		line := scanner.Text()
+// Decode parses an input stream and returns a slice of Nodes
+func Decode(reader io.Reader) ([]*Node, error) {
+	result := []*Node{}
+	stack := []*Node{}
+	var (
+		comment bool
+		inEntry bool
+	)
+	parser := func(line string) error {
 		for i := 0; i < len(line); i++ {
 			if !comment && i+1 < len(line) {
 				if line[i] == '/' && line[i+1] == '/' {
@@ -74,38 +51,48 @@ func Scan(obj io.Reader, keys map[string]string) []*Entry {
 						entryName += string(line[i])
 						i++
 					}
-					info := make(map[string]interface{})
-					stack.push(&tdfNode{value: &Entry{Name: entryName, Info: info}})
+					stack = append(stack, &Node{
+						Name:     entryName,
+						Fields:   make(map[string]string),
+						Children: make([]*Node, 0),
+					})
 					inEntry = false
 					continue
 				}
 				if line[i] == '{' {
 					inEntry = true
 				}
-				if line[i] == '}' && stack.size > 0 {
-					if stack.size == 1 {
-						entries = append(entries, stack.pop().value)
+				if line[i] == '}' && len(stack) > 0 {
+					if len(stack) == 1 {
+						result = append(result, stack[0])
+						stack = stack[:len(stack)-1]
 						inEntry = false
 					} else {
-						tmpEntry := stack.pop().value
-						stack.top.value.Info[tmpEntry.Name] = tmpEntry
+						tmpEntry := stack[len(stack)-1]
+						stack = stack[:len(stack)-1]
+						stack[len(stack)-1].Children = append(stack[len(stack)-1].Children, tmpEntry)
 					}
 				}
-				if line[i] == '=' && stack.size > 0 && inEntry {
+				if line[i] == '=' && len(stack) > 0 && inEntry {
 					attribute := strings.Trim(line[:i], " \t")
 					value := strings.Split(line[i+1:], ";")
-					if key, ok := keys[strings.ToLower(attribute)]; !ok {
-						attrLower := strings.ToLower(attribute)
-						keys[attrLower] = attribute
-						stack.top.value.Info[attribute] = value[0]
-						break
-					} else {
-						stack.top.value.Info[key] = value[0]
-						break
+					if len(value) < 1 {
+						return errors.New("found = with no ;")
 					}
+					stack[len(stack)-1].Fields[strings.ToLower(attribute)] = value[0]
 				}
 			}
 		}
+		return nil
 	}
-	return entries
+	lineScanner := bufio.NewScanner(reader)
+	for lineScanner.Scan() {
+		line := lineScanner.Text()
+		line = strings.TrimSpace(line)
+		err := parser(line)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }
